@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { ChevronDown, Check } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { motion, AnimatePresence } from 'motion/react';
@@ -24,6 +24,23 @@ export function FilterDropdown({ label, options, selected, onChange }: FilterDro
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
+  // 💥 2. 核心魔法：注入全局手势栈
+  const closeDropdown = useCallback(() => setIsOpen(false), []);
+  useEffect(() => {
+    const stack = (window as any).aetheriaBackStack;
+    if (!stack) return;
+
+    if (isOpen) {
+      // 只要打开，就把自己塞入栈顶
+      stack.push(closeDropdown);
+    }
+
+    return () => {
+      // 组件卸载或关闭时，把自己从栈里抽走
+      (window as any).aetheriaBackStack = stack.filter((fn: any) => fn !== closeDropdown);
+    };
+  }, [isOpen, closeDropdown]);
+
   const toggleOption = (option: string) => {
     if (selected.includes(option)) {
       onChange(selected.filter(item => item !== option));
@@ -40,8 +57,8 @@ export function FilterDropdown({ label, options, selected, onChange }: FilterDro
         onClick={() => setIsOpen(!isOpen)}
         className={cn(
           "flex items-center gap-2 px-3 py-1.5 rounded-full text-sm font-medium transition-colors border cursor-pointer",
-          selected.length > 0 
-            ? "bg-[#ff4e00]/20 text-[#ff4e00] border-[#ff4e00]/30" 
+          selected.length > 0
+            ? "bg-[#ff4e00]/20 text-[#ff4e00] border-[#ff4e00]/30"
             : "bg-white/5 text-white/70 border-white/10 hover:bg-white/10 hover:text-white"
         )}
       >

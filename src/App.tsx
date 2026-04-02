@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Play, Pause, SkipForward, SkipBack, Volume2, VolumeX, FolderSearch, Music, ListMusic, Settings, Disc3, ChevronUp, Search, Repeat, Repeat1, Shuffle, List, Trash2, GripVertical, Menu, X } from 'lucide-react';
+import { Play, Pause, SkipForward, SkipBack, Volume2, VolumeX, FolderSearch, Music, ListMusic, Settings, Disc3, ChevronUp, Search, Repeat, Repeat1, Shuffle, List, Trash2, GripVertical, Menu, X, LayoutGrid, List as ListIcon } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Song, Playlist } from './types';
 import { audioEngine, parseAudioFile } from './lib/audioEngine';
@@ -15,7 +15,20 @@ import { cn } from './lib/utils';
 type ViewMode = 'library' | 'playlists' | 'settings';
 type LoopMode = 'none' | 'all' | 'one' | 'shuffle';
 
+// 1. 扩展 Window 接口，声明全局 JSBridge 契约
+declare global {
+  interface Window {
+    AetheriaBridge?: {
+      startDirectoryScan: () => void;
+    };
+    // 供原生 Android 调用的回调函数
+    onNativeScanBatch: (filesJson: string, isLastBatch: boolean) => void;
+  }
+}
+
 export default function App() {
+  // 在 App 组件内部
+  const [libraryViewMode, setLibraryViewMode] = useState<'grid' | 'list'>('grid');
   const [songs, setSongs] = useState<Song[]>([]);
   const [playlists, setPlaylists] = useState<Playlist[]>(() => {
     const saved = localStorage.getItem('aetheria_playlists');
@@ -36,7 +49,7 @@ export default function App() {
   const [selectedExtensions, setSelectedExtensions] = useState<string[]>([]);
   const [sortOption, setSortOption] = useState<'default' | 'title' | 'artist' | 'album'>('default');
   const [visibleCount, setVisibleCount] = useState(50);
-  
+
   const [currentSong, setCurrentSong] = useState<Song | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [progress, setProgress] = useState(0);
@@ -58,7 +71,7 @@ export default function App() {
     const updateProgress = () => {
       setProgress(audioEngine.currentTime);
     };
-    
+
     const handleEnded = () => {
       handleNext();
     };
@@ -70,7 +83,7 @@ export default function App() {
     audioEngine.addEventListener('timeupdate', updateProgress);
     audioEngine.addEventListener('ended', handleEnded);
     audioEngine.addEventListener('crossfade-start', handleCrossfade);
-    
+
     return () => {
       audioEngine.removeEventListener('timeupdate', updateProgress);
       audioEngine.removeEventListener('ended', handleEnded);
@@ -103,7 +116,7 @@ export default function App() {
           const file = await entry.getFile();
           const name = file.name.toLowerCase();
           if (name.startsWith('._') || name.startsWith('.')) continue;
-          
+
           if (name.endsWith('.lrc')) {
             const baseName = file.name.substring(0, file.name.lastIndexOf('.')).toLowerCase();
             lrcFiles.set(baseName, file);
@@ -117,21 +130,21 @@ export default function App() {
     }
 
     await scanDirectory(handle);
-    
+
     setScanProgress({ current: 0, total: audioFiles.length });
     const BATCH_SIZE = 10;
-    
+
     for (let i = 0; i < audioFiles.length; i++) {
       try {
         const baseName = audioFiles[i].name.substring(0, audioFiles[i].name.lastIndexOf('.')).toLowerCase();
         const lrcFile = lrcFiles.get(baseName);
         let lyrics: string | undefined;
         if (lrcFile) lyrics = await lrcFile.text();
-        
+
         const song = await parseAudioFile(audioFiles[i]);
         song.lyrics = lyrics;
         newSongs.push(song);
-        
+
         if (i % BATCH_SIZE === 0 || i === audioFiles.length - 1) {
           setSongs(prev => {
             const existingIds = new Set(prev.map(s => s.id));
@@ -149,8 +162,17 @@ export default function App() {
   };
 
   const triggerScan = async () => {
+    // 【环境嗅探】：如果是 Android 壳环境
+    if (window.AetheriaBridge) {
+      setIsScanning(true);
+      setScanProgress({ current: 0, total: 0 }); // 初始未知总数
+      window.AetheriaBridge.startDirectoryScan();
+      return; // 阻断后续 Web 逻辑
+    }
+
+    // 原有 PC 端 Web API 回退逻辑
     const isInIframe = window.self !== window.top;
-    
+
     if ('showDirectoryPicker' in window && !isInIframe) {
       try {
         const handle = await (window as any).showDirectoryPicker();
@@ -170,14 +192,14 @@ export default function App() {
 
     setIsScanning(true);
     const newSongs: Song[] = [];
-    
+
     const audioFiles: File[] = [];
     const lrcFiles = new Map<string, File>();
-    
+
     Array.from(files).forEach((file: File) => {
       const name = file.name.toLowerCase();
       if (name.startsWith('._') || name.startsWith('.')) return;
-      
+
       if (name.endsWith('.lrc')) {
         const baseName = file.name.substring(0, file.name.lastIndexOf('.')).toLowerCase();
         lrcFiles.set(baseName, file);
@@ -190,7 +212,7 @@ export default function App() {
 
     // Batch updates to avoid too many re-renders
     const BATCH_SIZE = 5;
-    
+
     for (let i = 0; i < audioFiles.length; i++) {
       try {
         const baseName = audioFiles[i].name.substring(0, audioFiles[i].name.lastIndexOf('.')).toLowerCase();
@@ -199,11 +221,11 @@ export default function App() {
         if (lrcFile) {
           lyrics = await lrcFile.text();
         }
-        
+
         const song = await parseAudioFile(audioFiles[i]);
         song.lyrics = lyrics;
         newSongs.push(song);
-        
+
         if (i % BATCH_SIZE === 0 || i === audioFiles.length - 1) {
           setSongs(prev => {
             const existingIds = new Set(prev.map(s => s.id));
@@ -218,7 +240,7 @@ export default function App() {
         console.error("Error parsing file:", audioFiles[i].name, err);
       }
     }
-    
+
     setIsScanning(false);
     setScanProgress({ current: 0, total: 0 });
     if (fileInputRef.current) {
@@ -230,14 +252,14 @@ export default function App() {
     const newQueue = [...playQueue];
     const existingIndex = newQueue.findIndex(s => s.id === song.id);
     let newIndex;
-    
+
     if (existingIndex >= 0) {
       newIndex = existingIndex;
     } else {
       newQueue.push(song);
       newIndex = newQueue.length - 1;
     }
-    
+
     setPlayQueue(newQueue);
     setQueueIndex(newIndex);
     setCurrentSong(song);
@@ -249,9 +271,9 @@ export default function App() {
     const playlistSongs = playlist.songIds
       .map(id => songs.find(s => s.id === id))
       .filter((s): s is Song => s !== undefined);
-      
+
     if (playlistSongs.length === 0) return;
-    
+
     setPlayQueue(playlistSongs);
     setQueueIndex(0);
     setCurrentSong(playlistSongs[0]);
@@ -279,7 +301,7 @@ export default function App() {
 
   const handleNext = (isCrossfade = false) => {
     if (playQueue.length === 0) return;
-    
+
     if (loopMode === 'one') {
       if (isCrossfade) {
         audioEngine.play(playQueue[queueIndex].file);
@@ -289,9 +311,9 @@ export default function App() {
       }
       return;
     }
-    
+
     let nextIndex = queueIndex + 1;
-    
+
     if (loopMode === 'shuffle') {
       nextIndex = Math.floor(Math.random() * playQueue.length);
     } else if (nextIndex >= playQueue.length) {
@@ -305,7 +327,7 @@ export default function App() {
         return;
       }
     }
-    
+
     playSongFromQueue(nextIndex);
   };
 
@@ -315,17 +337,17 @@ export default function App() {
 
   const handlePrev = () => {
     if (playQueue.length === 0) return;
-    
+
     if (progress > 3) {
       audioEngine.seek(0);
       return;
     }
-    
+
     let prevIndex = queueIndex - 1;
     if (prevIndex < 0) {
       prevIndex = loopMode === 'all' ? playQueue.length - 1 : 0;
     }
-    
+
     playSongFromQueue(prevIndex);
   };
 
@@ -334,9 +356,9 @@ export default function App() {
 
   const filteredSongs = React.useMemo(() => {
     let result = songs.filter(s => {
-      const matchSearch = s.title.toLowerCase().includes(librarySearchQuery.toLowerCase()) || 
-                          s.artist.toLowerCase().includes(librarySearchQuery.toLowerCase()) ||
-                          s.album.toLowerCase().includes(librarySearchQuery.toLowerCase());
+      const matchSearch = s.title.toLowerCase().includes(librarySearchQuery.toLowerCase()) ||
+        s.artist.toLowerCase().includes(librarySearchQuery.toLowerCase()) ||
+        s.album.toLowerCase().includes(librarySearchQuery.toLowerCase());
       const matchArtist = selectedArtists.length === 0 || selectedArtists.includes(s.artist);
       const matchAlbum = selectedAlbums.length === 0 || selectedAlbums.includes(s.album);
       const ext = s.file.name.split('.').pop()?.toLowerCase() || '';
@@ -351,9 +373,37 @@ export default function App() {
     } else if (sortOption === 'album') {
       result.sort((a, b) => (a.album || '').localeCompare(b.album || ''));
     }
-    
+
     return result;
   }, [songs, librarySearchQuery, selectedArtists, selectedAlbums, selectedExtensions, sortOption]);
+
+  // 💥 虚拟相册引擎：根据歌曲库实时推导，彻底免维护！
+  const allPlaylists = React.useMemo(() => {
+    // 1. 将物理 localStorage 里的手工歌单拿出来
+    const manualPlaylists = playlists;
+
+    // 2. 根据全量歌曲实时聚类 Album
+    const albums = new Map<string, Song[]>();
+    songs.forEach(song => {
+      const albumName = song.album && song.album.trim() !== '' ? song.album : 'Unknown Album';
+      if (albumName !== 'Unknown Album') {
+        if (!albums.has(albumName)) albums.set(albumName, []);
+        albums.get(albumName)!.push(song);
+      }
+    });
+
+    // 3. 组装成 Playlist 接口
+    const autoPlaylists: Playlist[] = Array.from(albums.entries()).map(([album, albumSongs]) => ({
+      id: `auto-album-${album}`,
+      name: album,
+      coverUrl: albumSongs.find(s => s.coverUrl)?.coverUrl || null,
+      songIds: albumSongs.map(s => s.id),
+      isAuto: true // 打上安全标签，PlaylistsView 会自动识别它
+    }));
+
+    // 返回合并后的完整歌单（虚拟 + 物理）
+    return [...manualPlaylists, ...autoPlaylists];
+  }, [songs, playlists]);
 
   // Reset visible count when filters or library changes
   useEffect(() => {
@@ -383,7 +433,7 @@ export default function App() {
             });
           }
         },
-        { 
+        {
           threshold: 0.1, // Small threshold to be more reliable
           rootMargin: '400px' // Preload next batch
         }
@@ -394,7 +444,7 @@ export default function App() {
     };
 
     const result = initObserver();
-    
+
     return () => {
       if (typeof result === 'number' || (typeof result === 'object' && result !== null && 'unref' in result)) {
         clearTimeout(result as any);
@@ -403,6 +453,124 @@ export default function App() {
       }
     };
   }, [currentView, filteredSongs.length]);
+
+  // 3. 在 useEffect 中注册原生回调事件
+  useEffect(() => {
+    // 原生端每次扫描到一个批次（比如10个文件），就会调用这个 JS 全局方法
+    window.onNativeScanBatch = async (filesJson: string, isLastBatch: boolean) => {
+      try {
+        const nativeFiles = JSON.parse(filesJson);
+        const newSongs: Song[] = [];
+
+        for (const meta of nativeFiles) {
+          // 【核心魔法】：将原生的 content:// URI 转化为 Webview 可加载的安全虚拟 URL
+          // 我们将在 Android 端拦截这个特定的域名和路径
+          const virtualUrl = `https://appassets.androidplatform.net/local-audio/?uri=${encodeURIComponent(meta.uri)}`;
+
+          // 💥 【极致优化】：不进行任何 Fetch 抓取，直接构建“伪 File 对象”
+          // 从而彻底避开内存暴涨和网络 I/O 开销！
+          const fakeFile = {
+            name: meta.name,
+            virtualStreamUrl: virtualUrl
+          };
+
+          // 直接拼装成 Song 对象给 React 渲染
+          const song: Song = {
+            id: meta.uri, // 使用原生 URI 作为绝对唯一 ID
+            title: meta.title || meta.name.replace(/\.[^/.]+$/, ""), // 没标签就用文件名
+            artist: meta.artist || 'Unknown Artist',
+            album: meta.album || 'Unknown Album',
+            duration: meta.duration || 0,
+            coverUrl: meta.coverUrl,
+            lyrics: meta.lyrics,
+            file: fakeFile as any // 传给 audioEngine 的魔法代理
+          };
+
+          newSongs.push(song);
+        }
+
+        setSongs(prev => {
+          const existingIds = new Set(prev.map(s => s.id));
+          const uniqueNew = newSongs.filter(s => !existingIds.has(s.id));
+          return [...prev, ...uniqueNew];
+        });
+
+        setScanProgress(prev => ({
+          current: prev.current + nativeFiles.length,
+          total: isLastBatch ? prev.current + nativeFiles.length : prev.current + nativeFiles.length + '...'
+        }));
+
+        if (isLastBatch) {
+          setIsScanning(false);
+        }
+      } catch (err) {
+        console.error("处理原生扫描批次失败", err);
+        setIsScanning(false);
+      }
+    };
+
+    return () => {
+      // 组件卸载时清理全局桥接函数，防止内存泄漏
+      // @ts-ignore
+      delete window.onNativeScanBatch;
+    };
+  }, []);
+
+  // 监听安卓底层传来的返回手势
+  useEffect(() => {
+    // 初始化全局手势栈
+    if (!(window as any).aetheriaBackStack) {
+      (window as any).aetheriaBackStack = [];
+    }
+
+    (window as any).onNativeBackGesture = () => {
+      const backStack = (window as any).aetheriaBackStack;
+
+      // 💥 优先级 0：手势栈拦截（解决所有的局部 Dropdown、DropdownMenu）
+      if (backStack && backStack.length > 0) {
+        // 取出最后打开的那个菜单的关闭函数，并执行它
+        const closeHandler = backStack.pop();
+        if (typeof closeHandler === 'function') {
+          closeHandler();
+          return; // 成功拦截，终止后续执行
+        }
+      }
+
+      // 优先级 1：主页面的搜索模态框
+      setShowSearchModal(prev => {
+        if (prev) return false;
+
+        // 优先级 2：左侧移动端抽屉菜单
+        setIsMobileMenuOpen(menuOpen => {
+          if (menuOpen) return false;
+
+          // 优先级 3：播放队列
+          setShowQueue(queueOpen => {
+            if (queueOpen) return false;
+
+            // 优先级 4：歌词界面
+            setShowLyrics(lyricsOpen => {
+              if (lyricsOpen) return false;
+
+              // 优先级 5：设置页/播放列表页，退回 Library
+              setCurrentView(view => {
+                if (view !== 'library') return 'library';
+                return view;
+              });
+              return lyricsOpen;
+            });
+            return queueOpen;
+          });
+          return menuOpen;
+        });
+        return prev;
+      });
+    };
+
+    return () => {
+      delete (window as any).onNativeBackGesture;
+    };
+  }, []);
 
   const handleSeek = (e: React.ChangeEvent<HTMLInputElement>) => {
     const time = parseFloat(e.target.value);
@@ -454,7 +622,7 @@ export default function App() {
   return (
     <div className="flex flex-col h-[100dvh] w-full relative overflow-hidden bg-black text-white">
       <div className="atmosphere-bg" />
-      
+
       {/* Mobile Header */}
       <div className="md:hidden flex items-center p-4 border-b border-white/5 bg-black/40 backdrop-blur-md shrink-0 relative z-20 h-16">
         <button onClick={() => setIsMobileMenuOpen(true)} className="p-2 hover:bg-white/10 rounded-full">
@@ -468,10 +636,10 @@ export default function App() {
 
       {/* Main Content Area (Sidebar + Main) */}
       <div className="flex flex-1 w-full overflow-hidden relative z-30 mb-20 md:mb-24">
-        
+
         {/* Mobile Sidebar Overlay */}
         {isMobileMenuOpen && (
-          <div 
+          <div
             className="fixed inset-0 bg-black/60 backdrop-blur-sm z-40 md:hidden"
             onClick={() => setIsMobileMenuOpen(false)}
           />
@@ -493,7 +661,7 @@ export default function App() {
           </div>
 
           <nav className="flex flex-col gap-2 flex-1">
-            <button 
+            <button
               onClick={() => { setCurrentView('library'); setIsMobileMenuOpen(false); }}
               className={cn(
                 "flex items-center gap-3 p-3 rounded-xl transition-colors text-sm font-medium cursor-pointer w-full text-left",
@@ -502,7 +670,7 @@ export default function App() {
             >
               <Music className={cn("w-5 h-5", currentView === 'library' ? "text-[#ff4e00]" : "")} /> Library
             </button>
-            <button 
+            <button
               onClick={() => { setCurrentView('playlists'); setIsMobileMenuOpen(false); }}
               className={cn(
                 "flex items-center gap-3 p-3 rounded-xl transition-colors text-sm font-medium cursor-pointer w-full text-left",
@@ -511,7 +679,7 @@ export default function App() {
             >
               <ListMusic className={cn("w-5 h-5", currentView === 'playlists' ? "text-[#ff4e00]" : "")} /> Playlists
             </button>
-            <button 
+            <button
               onClick={() => { setCurrentView('settings'); setIsMobileMenuOpen(false); }}
               className={cn(
                 "flex items-center gap-3 p-3 rounded-xl transition-colors text-sm font-medium cursor-pointer w-full text-left",
@@ -520,7 +688,7 @@ export default function App() {
             >
               <Settings className={cn("w-5 h-5", currentView === 'settings' ? "text-[#ff4e00]" : "")} /> Settings
             </button>
-            <button 
+            <button
               onClick={triggerScan}
               disabled={isScanning}
               className="flex items-center justify-center gap-3 p-3 bg-white/10 hover:bg-white/20 transition-colors rounded-xl text-sm font-medium backdrop-blur-md border border-white/10 cursor-pointer w-full"
@@ -529,18 +697,18 @@ export default function App() {
               {isScanning ? `Scanning... ${scanProgress.current}/${scanProgress.total}` : "Scan Local Library"}
             </button>
           </nav>
-          
+
         </div>
 
         {/* Main Content */}
         <div className="flex-1 flex flex-col overflow-hidden relative">
-          <input 
-            type="file" 
-            ref={fileInputRef} 
-            onChange={handleFileSelect} 
-            className="hidden" 
-            {...{ webkitdirectory: "", directory: "" } as any} 
-            multiple 
+          <input
+            type="file"
+            ref={fileInputRef}
+            onChange={handleFileSelect}
+            className="hidden"
+            {...{ webkitdirectory: "", directory: "" } as any}
+            multiple
           />
           <AnimatePresence mode="wait">
             {showLyrics && currentSong ? (
@@ -552,9 +720,9 @@ export default function App() {
                 transition={{ duration: 0.3 }}
                 className="absolute inset-0 flex flex-col bg-black/90 backdrop-blur-xl z-40"
               >
-                <LyricsView 
-                  song={currentSong} 
-                  progress={progress} 
+                <LyricsView
+                  song={currentSong}
+                  progress={progress}
                   playlists={playlists}
                   onArtistClick={(artist) => {
                     setSelectedArtists([artist]);
@@ -567,15 +735,15 @@ export default function App() {
                     setShowLyrics(false);
                   }}
                   onAddSongToPlaylist={(playlistId, songId) => {
-                    setPlaylists(playlists.map(p => 
+                    setPlaylists(playlists.map(p =>
                       p.id === playlistId && !p.songIds.includes(songId)
                         ? { ...p, songIds: [...p.songIds, songId] }
                         : p
                     ));
                   }}
                   onRemoveSongFromPlaylist={(playlistId, songId) => {
-                    setPlaylists(playlists.map(p => 
-                      p.id === playlistId 
+                    setPlaylists(playlists.map(p =>
+                      p.id === playlistId
                         ? { ...p, songIds: p.songIds.filter(id => id !== songId) }
                         : p
                     ));
@@ -594,8 +762,8 @@ export default function App() {
                 transition={{ duration: 0.3 }}
                 className="absolute inset-0 flex flex-col"
               >
-                <PlaylistsView 
-                  playlists={playlists}
+                <PlaylistsView
+                  playlists={allPlaylists}
                   songs={songs}
                   currentSong={currentSong}
                   onPlayPlaylist={playPlaylist}
@@ -606,29 +774,29 @@ export default function App() {
                     setPlaylists(playlists.filter(p => p.id !== id));
                   }}
                   onAddSongToPlaylist={(playlistId, songId) => {
-                    setPlaylists(playlists.map(p => 
+                    setPlaylists(playlists.map(p =>
                       p.id === playlistId && !p.songIds.includes(songId)
                         ? { ...p, songIds: [...p.songIds, songId] }
                         : p
                     ));
                   }}
                   onRemoveSongFromPlaylist={(playlistId, songId) => {
-                    setPlaylists(playlists.map(p => 
-                      p.id === playlistId 
+                    setPlaylists(playlists.map(p =>
+                      p.id === playlistId
                         ? { ...p, songIds: p.songIds.filter(id => id !== songId) }
                         : p
                     ));
                   }}
                   onReorderPlaylist={(playlistId, newSongIds) => {
-                    setPlaylists(playlists.map(p => 
-                      p.id === playlistId 
+                    setPlaylists(playlists.map(p =>
+                      p.id === playlistId
                         ? { ...p, songIds: newSongIds }
                         : p
                     ));
                   }}
                   onUpdatePlaylist={(id, name, coverUrl) => {
-                    setPlaylists(playlists.map(p => 
-                      p.id === id 
+                    setPlaylists(playlists.map(p =>
+                      p.id === id
                         ? { ...p, name, coverUrl }
                         : p
                     ));
@@ -651,7 +819,7 @@ export default function App() {
                 transition={{ duration: 0.3 }}
                 className="absolute inset-0 flex flex-col"
               >
-                <SettingsView 
+                <SettingsView
                   onClose={() => setCurrentView('library')}
                   songs={songs}
                   onClearLibrary={() => {
@@ -672,7 +840,7 @@ export default function App() {
                 transition={{ duration: 0.3 }}
                 className="absolute inset-0 flex flex-col"
               >
-                <div 
+                <div
                   ref={libraryContainerRef}
                   className="flex-1 overflow-y-auto overflow-x-hidden p-4 md:p-8"
                 >
@@ -688,7 +856,7 @@ export default function App() {
                           </span>
                         )}
                         {filteredSongs.length > 0 && (
-                          <button 
+                          <button
                             onClick={() => {
                               setPlayQueue(filteredSongs);
                               setQueueIndex(0);
@@ -706,15 +874,15 @@ export default function App() {
                         <>
                           <div className="hidden md:flex relative w-64">
                             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-white/40" />
-                            <input 
-                              type="text" 
-                              placeholder="Search library..." 
+                            <input
+                              type="text"
+                              placeholder="Search library..."
                               value={librarySearchQuery}
                               onChange={e => setLibrarySearchQuery(e.target.value)}
                               className="w-full bg-white/5 border border-white/10 rounded-full py-2 pl-10 pr-4 text-sm text-white placeholder:text-white/40 focus:outline-none focus:border-[#ff4e00]/50 focus:bg-white/10 transition-all"
                             />
                           </div>
-                          <button 
+                          <button
                             className="md:hidden p-2 bg-white/5 border border-white/10 rounded-full text-white/70"
                             onClick={() => setShowSearchModal(true)}
                           >
@@ -723,30 +891,30 @@ export default function App() {
                         </>
                       )}
                     </div>
-                    
+
                     {songs.length > 0 && (
                       <div className="flex items-center gap-3 flex-wrap">
                         <SortDropdown selected={sortOption} onChange={setSortOption} />
-                        <FilterDropdown 
-                          label="Artist" 
-                          options={availableArtists} 
-                          selected={selectedArtists} 
-                          onChange={setSelectedArtists} 
+                        <FilterDropdown
+                          label="Artist"
+                          options={availableArtists}
+                          selected={selectedArtists}
+                          onChange={setSelectedArtists}
                         />
-                        <FilterDropdown 
-                          label="Album" 
-                          options={availableAlbums} 
-                          selected={selectedAlbums} 
-                          onChange={setSelectedAlbums} 
+                        <FilterDropdown
+                          label="Album"
+                          options={availableAlbums}
+                          selected={selectedAlbums}
+                          onChange={setSelectedAlbums}
                         />
-                        <FilterDropdown 
-                          label="Format" 
-                          options={availableExtensions} 
-                          selected={selectedExtensions} 
-                          onChange={setSelectedExtensions} 
+                        <FilterDropdown
+                          label="Format"
+                          options={availableExtensions}
+                          selected={selectedExtensions}
+                          onChange={setSelectedExtensions}
                         />
                         {(selectedArtists.length > 0 || selectedAlbums.length > 0 || selectedExtensions.length > 0) && (
-                          <button 
+                          <button
                             onClick={() => {
                               setSelectedArtists([]);
                               setSelectedAlbums([]);
@@ -757,15 +925,30 @@ export default function App() {
                             Clear Filters
                           </button>
                         )}
+                        {/* 💥 Library 的视图切换器，靠右排布 */}
+                        <div className="flex items-center gap-1 bg-white/5 p-1 rounded-full border border-white/10 ml-auto shrink-0">
+                          <button
+                            onClick={() => setLibraryViewMode('grid')}
+                            className={cn("p-1 md:p-1.5 rounded-full transition-all", libraryViewMode === 'grid' ? "bg-white/20 text-white" : "text-white/40 hover:text-white")}
+                          >
+                            <LayoutGrid className="w-3.5 h-3.5 md:w-4 md:h-4" />
+                          </button>
+                          <button
+                            onClick={() => setLibraryViewMode('list')}
+                            className={cn("p-1 md:p-1.5 rounded-full transition-all", libraryViewMode === 'list' ? "bg-white/20 text-white" : "text-white/40 hover:text-white")}
+                          >
+                            <ListIcon className="w-3.5 h-3.5 md:w-4 md:h-4" />
+                          </button>
+                        </div>
                       </div>
                     )}
                   </div>
-                  
+
                   {songs.length === 0 ? (
                     <div className="flex flex-col items-center justify-center h-[60%] text-white/40">
                       <Disc3 className="w-24 h-24 mb-6 opacity-20" />
                       <p className="text-lg font-light text-white/70 mb-6">Your library is empty.</p>
-                      <button 
+                      <button
                         onClick={triggerScan}
                         disabled={isScanning}
                         className="flex items-center justify-center gap-2 bg-[#ff4e00] hover:bg-[#ff6a2b] text-white transition-all hover:scale-105 rounded-full py-4 px-8 text-base font-medium shadow-lg shadow-[#ff4e00]/20 cursor-pointer"
@@ -776,59 +959,114 @@ export default function App() {
                     </div>
                   ) : (
                     <>
-                      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-6 pb-8">
-                        {filteredSongs.slice(0, visibleCount).map((song) => (
-                        <motion.div 
-                          key={song.id}
-                          initial={{ opacity: 0, y: 20 }}
-                          animate={{ opacity: 1, y: 0 }}
-                          whileHover={{ y: -4, transition: { duration: 0.2, ease: "easeOut" } }}
-                          onClick={() => playSongFromLibrary(song)}
-                          className={cn(
-                            "glass-panel rounded-2xl p-4 cursor-pointer transition-all hover:bg-white/10 group",
-                            currentSong?.id === song.id ? "ring-2 ring-[#ff4e00] bg-white/5" : ""
-                          )}
-                          style={{ contentVisibility: 'auto', containIntrinsicSize: '200px' }}
-                        >
-                          <div className="aspect-square rounded-xl overflow-hidden mb-4 bg-black/40 relative shadow-lg">
-                            {song.coverUrl ? (
-                              <img src={song.coverUrl} alt={song.title} className="w-full h-full object-cover" loading="lazy" />
-                            ) : (
-                              <div className="w-full h-full flex items-center justify-center">
-                                <Music className="w-12 h-12 text-white/20" />
+                      {libraryViewMode === 'grid' ? (
+                        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-6 pb-8">
+                          {filteredSongs.slice(0, visibleCount).map((song) => (
+                            <motion.div
+                              key={song.id}
+                              initial={{ opacity: 0, y: 20 }}
+                              animate={{ opacity: 1, y: 0 }}
+                              whileHover={{ y: -4, transition: { duration: 0.2, ease: "easeOut" } }}
+                              onClick={() => playSongFromLibrary(song)}
+                              className={cn(
+                                "glass-panel rounded-2xl p-4 cursor-pointer transition-all hover:bg-white/10 group",
+                                currentSong?.id === song.id ? "ring-2 ring-[#ff4e00] bg-white/5" : ""
+                              )}
+                              style={{ contentVisibility: 'auto', containIntrinsicSize: '200px' }}
+                            >
+                              <div className="aspect-square rounded-xl overflow-hidden mb-4 bg-black/40 relative shadow-lg">
+                                {song.coverUrl ? (
+                                  <img src={song.coverUrl} alt={song.title} className="w-full h-full object-cover" loading="lazy" />
+                                ) : (
+                                  <div className="w-full h-full flex items-center justify-center">
+                                    <Music className="w-12 h-12 text-white/20" />
+                                  </div>
+                                )}
+                                <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                                  <Play className="w-12 h-12 text-white fill-white" />
+                                </div>
                               </div>
-                            )}
-                            <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-                              <Play className="w-12 h-12 text-white fill-white" />
-                            </div>
-                          </div>
-                          <MarqueeText className="font-medium text-sm mb-1">{song.title}</MarqueeText>
-                          <MarqueeText className="text-xs text-white/50">{song.artist}{song.album && song.album !== 'Unknown Album' ? ` • ${song.album}` : ''}</MarqueeText>
-                          {(song.codec || song.bitsPerSample || song.bitrate) && (
-                            <div className="mt-2 flex items-center gap-1.5 flex-wrap">
-                              {song.codec && (
-                                <span className="text-[9px] font-mono uppercase tracking-wider px-1.5 py-0.5 rounded-sm bg-white/10 text-white/70 border border-white/5">
-                                  {song.codec}
-                                </span>
+                              <MarqueeText className="font-medium text-sm mb-1">{song.title}</MarqueeText>
+                              <MarqueeText className="text-xs text-white/50">{song.artist}{song.album && song.album !== 'Unknown Album' ? ` • ${song.album}` : ''}</MarqueeText>
+                              {(song.codec || song.bitsPerSample || song.bitrate) && (
+                                <div className="mt-2 flex items-center gap-1.5 flex-wrap">
+                                  {song.codec && (
+                                    <span className="text-[9px] font-mono uppercase tracking-wider px-1.5 py-0.5 rounded-sm bg-white/10 text-white/70 border border-white/5">
+                                      {song.codec}
+                                    </span>
+                                  )}
+                                  {(song.bitsPerSample || song.bitrate) && song.sampleRate && (
+                                    <span className="text-[9px] font-mono tracking-wider px-1.5 py-0.5 rounded-sm bg-[#ff4e00]/20 text-[#ff4e00] border border-[#ff4e00]/20">
+                                      {song.bitsPerSample ? `${song.bitsPerSample}-bit` : `${Math.round(song.bitrate! / 1000)} kbps`} / {(song.sampleRate / 1000).toFixed(1)}kHz
+                                    </span>
+                                  )}
+                                </div>
                               )}
-                              {(song.bitsPerSample || song.bitrate) && song.sampleRate && (
-                                <span className="text-[9px] font-mono tracking-wider px-1.5 py-0.5 rounded-sm bg-[#ff4e00]/20 text-[#ff4e00] border border-[#ff4e00]/20">
-                                  {song.bitsPerSample ? `${song.bitsPerSample}-bit` : `${Math.round(song.bitrate! / 1000)} kbps`} / {(song.sampleRate / 1000).toFixed(1)}kHz
-                                </span>
+                            </motion.div>
+                          ))}
+                        </div>) : (
+                        // 💥 专为海量曲库和窄屏优化的大列表模式
+                        <div className="flex flex-col gap-1 md:gap-2 pb-8 w-full max-w-5xl mx-auto">
+                          {filteredSongs.slice(0, visibleCount).map((song, index) => (
+                            <motion.div
+                              key={song.id}
+                              initial={{ opacity: 0, y: 10 }}
+                              animate={{ opacity: 1, y: 0 }}
+                              onClick={() => playSongFromLibrary(song)}
+                              className={cn(
+                                "flex items-center gap-3 md:gap-4 p-2 md:p-3 glass-panel rounded-xl hover:bg-white/10 transition-colors group cursor-pointer border border-transparent",
+                                currentSong?.id === song.id ? "border-[#ff4e00]/30 bg-white/10" : ""
                               )}
-                            </div>
-                          )}
-                        </motion.div>
-                      ))}
-                    </div>
-                    {visibleCount < filteredSongs.length && (
-                      <div ref={observerTarget} className="h-20 flex items-center justify-center">
-                        <div className="w-6 h-6 border-2 border-[#ff4e00] border-t-transparent rounded-full animate-spin" />
-                      </div>
-                    )}
-                  </>
-                )}
-              </div>
+                            >
+                              <div className="w-6 md:w-8 text-center hidden md:flex items-center justify-center">
+                                <span className="text-white/40 text-sm group-hover:hidden">{index + 1}</span>
+                                <Play className="w-4 h-4 text-white fill-white hidden group-hover:block" />
+                              </div>
+
+                              <div className="w-10 h-10 md:w-12 md:h-12 rounded-lg overflow-hidden bg-black/40 shrink-0 relative shadow-md">
+                                {song.coverUrl ? (
+                                  <img src={song.coverUrl} alt={song.title} className="w-full h-full object-cover" loading="lazy" />
+                                ) : (
+                                  <div className="w-full h-full flex items-center justify-center">
+                                    <Music className="w-4 h-4 md:w-5 md:h-5 text-white/20" />
+                                  </div>
+                                )}
+                                {/* 在手机上，把 Play 按钮叠加在封面上 */}
+                                <div className="md:hidden absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
+                                  <Play className="w-4 h-4 text-white fill-white" />
+                                </div>
+                              </div>
+
+                              <div className="flex-1 min-w-0 overflow-hidden pr-2">
+                                <MarqueeText className={cn("font-medium text-sm md:text-base mb-0.5", currentSong?.id === song.id ? "text-[#ff4e00]" : "text-white")}>
+                                  {song.title}
+                                </MarqueeText>
+                                <MarqueeText className="text-xs text-white/50">
+                                  {song.artist}
+                                  {/* 在手机竖屏上，把 Album 塞在歌手后面省空间 */}
+                                  <span className="md:hidden">{song.album && song.album !== 'Unknown Album' ? ` • ${song.album}` : ''}</span>
+                                </MarqueeText>
+                              </div>
+
+                              <div className="w-1/4 min-w-0 hidden md:block overflow-hidden">
+                                <MarqueeText className="text-sm text-white/60">{song.album}</MarqueeText>
+                              </div>
+
+                              <div className="hidden lg:flex items-center w-24 justify-end text-xs font-mono text-white/40">
+                                {formatTime(song.duration || 0)}
+                              </div>
+                            </motion.div>
+                          ))}
+                        </div>
+                      )}
+                      {visibleCount < filteredSongs.length && (
+                        <div ref={observerTarget} className="h-20 flex items-center justify-center">
+                          <div className="w-6 h-6 border-2 border-[#ff4e00] border-t-transparent rounded-full animate-spin" />
+                        </div>
+                      )}
+                    </>
+                  )}
+                </div>
               </motion.div>
             )}
           </AnimatePresence>
@@ -838,7 +1076,7 @@ export default function App() {
       {/* Player Bar */}
       <div className="absolute bottom-0 left-0 w-full h-20 md:h-24 glass-panel border-t border-white/10 z-40 flex items-center px-4 md:px-6 gap-2 md:gap-4 bg-black/80 backdrop-blur-xl justify-between">
         {/* Now Playing Info */}
-        <div 
+        <div
           className="flex items-center gap-2 md:gap-4 w-[35%] md:w-1/4 min-w-0 cursor-pointer hover:bg-white/5 p-1 md:p-2 -ml-1 md:-ml-2 rounded-xl transition-all group shrink-0 overflow-hidden"
           onClick={() => currentSong && setShowLyrics(!showLyrics)}
         >
@@ -886,11 +1124,11 @@ export default function App() {
         {/* Controls & Progress */}
         <div className="flex-1 flex flex-col items-center justify-center gap-1 md:gap-2 min-w-0 px-2">
           <div className="flex items-center gap-3 md:gap-6">
-            <button 
+            <button
               onClick={() => {
                 const modes: LoopMode[] = ['none', 'all', 'one', 'shuffle'];
                 setLoopMode(modes[(modes.indexOf(loopMode) + 1) % modes.length]);
-              }} 
+              }}
               className={cn("transition-colors cursor-pointer", loopMode !== 'none' ? "text-[#ff4e00]" : "text-white/60 hover:text-white")}
             >
               {loopMode === 'one' ? <Repeat1 className="w-3 h-3 md:w-4 md:h-4" /> : loopMode === 'shuffle' ? <Shuffle className="w-3 h-3 md:w-4 md:h-4" /> : <Repeat className="w-3 h-3 md:w-4 md:h-4" />}
@@ -898,7 +1136,7 @@ export default function App() {
             <button onClick={handlePrev} className="text-white/60 hover:text-white transition-colors cursor-pointer">
               <SkipBack className="w-4 h-4 md:w-5 md:h-5 fill-current" />
             </button>
-            <button 
+            <button
               onClick={togglePlay}
               className="w-8 h-8 md:w-10 md:h-10 rounded-full bg-white text-black flex items-center justify-center hover:scale-105 transition-transform shadow-lg shadow-white/10 cursor-pointer"
             >
@@ -907,20 +1145,20 @@ export default function App() {
             <button onClick={handleNext} className="text-white/60 hover:text-white transition-colors cursor-pointer">
               <SkipForward className="w-4 h-4 md:w-5 md:h-5 fill-current" />
             </button>
-            <button 
+            <button
               onClick={() => setShowQueue(!showQueue)}
               className={cn("transition-colors cursor-pointer", showQueue ? "text-[#ff4e00]" : "text-white/60 hover:text-white")}
             >
               <List className="w-3 h-3 md:w-4 md:h-4" />
             </button>
           </div>
-          
+
           <div className="w-full flex items-center gap-2 md:gap-3 text-[10px] md:text-xs text-white/50 font-mono">
             <span>{formatTime(progress)}</span>
-            <input 
-              type="range" 
-              min={0} 
-              max={currentSong?.duration || 100} 
+            <input
+              type="range"
+              min={0}
+              max={currentSong?.duration || 100}
               value={progress}
               onChange={handleSeek}
               className="flex-1 cursor-pointer h-1 md:h-1.5"
@@ -935,24 +1173,24 @@ export default function App() {
             <Visualizer />
           </div>
           <div className="flex items-center gap-1 md:gap-2 relative group" onWheel={handleWheelVolume}>
-            <button 
+            <button
               onClick={() => {
                 if (window.innerWidth < 768) {
                   setShowMobileVolume(!showMobileVolume);
                 } else {
                   toggleMute();
                 }
-              }} 
+              }}
               className="text-white/60 hover:text-white transition-colors cursor-pointer p-2 shrink-0"
             >
               {isMuted || volume === 0 ? <VolumeX className="w-5 h-5" /> : <Volume2 className="w-5 h-5" />}
             </button>
-            
+
             {/* Desktop Volume Slider */}
-            <input 
-              type="range" 
-              min={0} 
-              max={1} 
+            <input
+              type="range"
+              min={0}
+              max={1}
               step={0.01}
               value={volume}
               onChange={handleVolume}
@@ -965,10 +1203,10 @@ export default function App() {
               showMobileVolume ? "opacity-100 translate-y-0 pointer-events-auto" : "opacity-0 translate-y-2 pointer-events-none"
             )}>
               <div className="h-32 w-8 flex items-center justify-center">
-                <input 
-                  type="range" 
-                  min={0} 
-                  max={1} 
+                <input
+                  type="range"
+                  min={0}
+                  max={1}
                   step={0.01}
                   value={volume}
                   onChange={handleVolume}
@@ -978,7 +1216,7 @@ export default function App() {
               </div>
             </div>
           </div>
-          
+
           {/* Queue Overlay */}
           <AnimatePresence>
             {showQueue && (
@@ -993,8 +1231,8 @@ export default function App() {
                     <h3 className="font-medium flex items-center gap-2"><List className="w-4 h-4" /> Play Queue</h3>
                     {playQueue.length > 0 && (
                       <div className="flex items-center gap-2 ml-2">
-                        <input 
-                          type="checkbox" 
+                        <input
+                          type="checkbox"
                           checked={selectedQueueItems.size === playQueue.length && playQueue.length > 0}
                           onChange={(e) => {
                             if (e.target.checked) {
@@ -1011,38 +1249,38 @@ export default function App() {
                   </div>
                   <div className="flex items-center gap-3">
                     {selectedQueueItems.size > 0 && (
-                      <button 
+                      <button
                         onClick={() => {
                           const newQueue = playQueue.filter((_, i) => !selectedQueueItems.has(i));
                           let newIndex = queueIndex;
-                          
+
                           if (selectedQueueItems.has(queueIndex)) {
-                              let nextAvailable = -1;
-                              for (let i = queueIndex + 1; i < playQueue.length; i++) {
-                                  if (!selectedQueueItems.has(i)) { nextAvailable = i; break; }
+                            let nextAvailable = -1;
+                            for (let i = queueIndex + 1; i < playQueue.length; i++) {
+                              if (!selectedQueueItems.has(i)) { nextAvailable = i; break; }
+                            }
+                            if (nextAvailable === -1) {
+                              for (let i = 0; i < queueIndex; i++) {
+                                if (!selectedQueueItems.has(i)) { nextAvailable = i; break; }
                               }
-                              if (nextAvailable === -1) {
-                                  for (let i = 0; i < queueIndex; i++) {
-                                      if (!selectedQueueItems.has(i)) { nextAvailable = i; break; }
-                                  }
-                              }
-                              if (nextAvailable !== -1) {
-                                  newIndex = playQueue.slice(0, nextAvailable).filter((_, i) => !selectedQueueItems.has(i)).length;
-                                  setQueueIndex(newIndex);
-                                  setCurrentSong(newQueue[newIndex]);
-                                  audioEngine.play(newQueue[newIndex].file);
-                                  setIsPlaying(true);
-                              } else {
-                                  setQueueIndex(-1);
-                                  setCurrentSong(null);
-                                  audioEngine.pause();
-                                  setIsPlaying(false);
-                              }
-                          } else {
-                              newIndex = playQueue.slice(0, queueIndex).filter((_, i) => !selectedQueueItems.has(i)).length;
+                            }
+                            if (nextAvailable !== -1) {
+                              newIndex = playQueue.slice(0, nextAvailable).filter((_, i) => !selectedQueueItems.has(i)).length;
                               setQueueIndex(newIndex);
+                              setCurrentSong(newQueue[newIndex]);
+                              audioEngine.play(newQueue[newIndex].file);
+                              setIsPlaying(true);
+                            } else {
+                              setQueueIndex(-1);
+                              setCurrentSong(null);
+                              audioEngine.pause();
+                              setIsPlaying(false);
+                            }
+                          } else {
+                            newIndex = playQueue.slice(0, queueIndex).filter((_, i) => !selectedQueueItems.has(i)).length;
+                            setQueueIndex(newIndex);
                           }
-                          
+
                           setPlayQueue(newQueue);
                           setSelectedQueueItems(new Set());
                         }}
@@ -1059,7 +1297,7 @@ export default function App() {
                     <div className="p-8 text-center text-white/40 text-sm">Queue is empty</div>
                   ) : (
                     playQueue.map((song, index) => (
-                      <div 
+                      <div
                         key={`${song.id}-${index}`}
                         draggable
                         onDragStart={(e) => {
@@ -1073,13 +1311,13 @@ export default function App() {
                           const fromIndex = parseInt(e.dataTransfer.getData('text/plain'));
                           const toIndex = index;
                           if (fromIndex === toIndex) return;
-                          
+
                           const newQueue = [...playQueue];
                           const [movedSong] = newQueue.splice(fromIndex, 1);
                           newQueue.splice(toIndex, 0, movedSong);
-                          
+
                           setPlayQueue(newQueue);
-                          
+
                           // Update queueIndex if necessary
                           if (queueIndex === fromIndex) {
                             setQueueIndex(toIndex);
@@ -1096,7 +1334,7 @@ export default function App() {
                         onClick={() => playSongFromQueue(index)}
                       >
                         <div className="flex items-center gap-2 shrink-0">
-                          <input 
+                          <input
                             type="checkbox"
                             checked={selectedQueueItems.has(index)}
                             onChange={(e) => {
@@ -1143,9 +1381,9 @@ export default function App() {
           <div className="w-full max-w-md bg-[#1a1a1a] border border-white/10 rounded-2xl p-4 shadow-2xl">
             <div className="flex items-center gap-2 mb-4">
               <Search className="w-5 h-5 text-white/40" />
-              <input 
-                type="text" 
-                placeholder="Search library..." 
+              <input
+                type="text"
+                placeholder="Search library..."
                 value={librarySearchQuery}
                 onChange={e => setLibrarySearchQuery(e.target.value)}
                 autoFocus

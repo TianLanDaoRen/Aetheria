@@ -20,4 +20,5 @@ export interface Playlist {
   name: string;
   coverUrl: string | null;
   songIds: string[];
+  isAuto?: boolean; // 新增：用于区分是否为自动推导的专辑歌单
 }

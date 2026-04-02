@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { ChevronDown, Check, ArrowUpDown } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { motion, AnimatePresence } from 'motion/react';
@@ -29,6 +29,21 @@ export function SortDropdown({ selected, onChange }: SortDropdownProps) {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
+  // 💥 注入全局手势栈
+  const closeDropdown = useCallback(() => setIsOpen(false), []);
+  useEffect(() => {
+    const stack = (window as any).aetheriaBackStack;
+    if (!stack) return;
+
+    if (isOpen) {
+      stack.push(closeDropdown);
+    }
+
+    return () => {
+      (window as any).aetheriaBackStack = stack.filter((fn: any) => fn !== closeDropdown);
+    };
+  }, [isOpen, closeDropdown]);
+
   const selectedLabel = sortOptions.find(o => o.value === selected)?.label || 'Sort';
 
   return (
@@ -38,7 +53,7 @@ export function SortDropdown({ selected, onChange }: SortDropdownProps) {
         className={cn(
           "flex items-center gap-2 px-3 py-1.5 rounded-full text-sm font-medium transition-colors border cursor-pointer",
           selected !== 'default'
-            ? "bg-[#ff4e00]/20 text-[#ff4e00] border-[#ff4e00]/30" 
+            ? "bg-[#ff4e00]/20 text-[#ff4e00] border-[#ff4e00]/30"
             : "bg-white/5 text-white/70 border-white/10 hover:bg-white/10 hover:text-white"
         )}
       >
