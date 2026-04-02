@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Play, Pause, SkipForward, SkipBack, Volume2, VolumeX, FolderSearch, Music, ListMusic, Settings, Disc3, ChevronUp, Search, Repeat, Repeat1, Shuffle, List, Trash2, GripVertical, Menu, X, LayoutGrid, List as ListIcon } from 'lucide-react';
+import { Play, Pause, SkipForward, SkipBack, Volume2, VolumeX, FolderSearch, Music, ListMusic, Settings, Disc3, ChevronUp, Search, Repeat, Repeat1, Shuffle, List, Trash2, GripVertical, Menu, X, LayoutGrid, List as ListIcon, Moon, Timer } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Song, Playlist } from './types';
 import { audioEngine, parseAudioFile } from './lib/audioEngine';
@@ -20,16 +20,71 @@ declare global {
   interface Window {
     AetheriaBridge?: {
       startDirectoryScan: () => void;
+      setKeepAlive: (isPlaying: boolean) => void;
     };
     // 供原生 Android 调用的回调函数
     onNativeScanBatch: (filesJson: string, isLastBatch: boolean) => void;
   }
 }
 
+// ==========================================
+// 🛡️ Aetheria 极速本地数据库引擎 (IndexedDB)
+// ==========================================
+const dbPromise = new Promise<IDBDatabase>((resolve, reject) => {
+  const request = indexedDB.open('aetheria_database', 1);
+  request.onupgradeneeded = (e) => {
+    const db = (e.target as IDBOpenDBRequest).result;
+    if (!db.objectStoreNames.contains('library')) {
+      // 使用歌曲的 id (即原生 uri) 作为唯一主键
+      db.createObjectStore('library', { keyPath: 'id' });
+    }
+  };
+  request.onsuccess = () => resolve(request.result);
+  request.onerror = () => reject(request.error);
+});
+
+const saveLibraryToDB = async (songs: Song[]) => {
+  const db = await dbPromise;
+  const tx = db.transaction('library', 'readwrite');
+  const store = tx.objectStore('library');
+
+  // 清空旧库并开启高性能批量事务写入
+  store.clear();
+  songs.forEach(song => store.put(song));
+
+  return new Promise((resolve) => {
+    tx.oncomplete = () => resolve(true);
+  });
+};
+
+const loadLibraryFromDB = async (): Promise<Song[]> => {
+  const db = await dbPromise;
+  return new Promise((resolve) => {
+    const tx = db.transaction('library', 'readonly');
+    const store = tx.objectStore('library');
+    const request = store.getAll();
+    request.onsuccess = () => resolve(request.result || []);
+  });
+};
+
 export default function App() {
   // 在 App 组件内部
   const [libraryViewMode, setLibraryViewMode] = useState<'grid' | 'list'>('grid');
   const [songs, setSongs] = useState<Song[]>([]);
+  // 💥 增加一个初始化状态，防止刚启动时空数组覆盖掉数据库
+  const [isLibraryLoaded, setIsLibraryLoaded] = useState(false);
+  // ==========================================
+  // 🌙 睡眠定时器状态
+  // ==========================================
+  const [showSleepTimerModal, setShowSleepTimerModal] = useState(false);
+  const [sleepTimerActive, setSleepTimerActive] = useState(false);
+  const [sleepTargetTime, setSleepTargetTime] = useState<number | null>(null);
+  const [sleepFinishTrack, setSleepFinishTrack] = useState(true); // 默认开启“播完当前曲目”
+  const [sleepTimeRemaining, setSleepTimeRemaining] = useState<number>(0);
+  const [customSleepTime, setCustomSleepTime] = useState<string>('');
+
+  // 使用 useRef 记录“等待当前歌曲结束”的指令，防止闭包陷阱
+  const pendingSleepStopRef = useRef(false);
   const [playlists, setPlaylists] = useState<Playlist[]>(() => {
     const saved = localStorage.getItem('aetheria_playlists');
     return saved ? JSON.parse(saved) : [];
@@ -62,6 +117,71 @@ export default function App() {
   const prevVolume = useRef(1);
   const queueContainerRef = useRef<HTMLDivElement>(null);
   const handleNextRef = useRef<() => void>(null);
+
+  // ==========================================
+  // 💥 开机极速闪加：从底层数据库复活曲库
+  // ==========================================
+  useEffect(() => {
+    if (!window.AetheriaBridge) return;
+    loadLibraryFromDB().then(savedSongs => {
+      if (savedSongs.length > 0) {
+        setSongs(savedSongs);
+        console.log(`[Aetheria DB] 成功从本地数据库唤醒 ${savedSongs.length} 首歌曲`);
+      }
+      setIsLibraryLoaded(true); // 标记加载完毕
+    });
+  }, []);
+
+  // ==========================================
+  // 💥 无感同步：只要曲库发生变动，自动写入数据库
+  // ==========================================
+  useEffect(() => {
+    if (!window.AetheriaBridge) return;
+    // 核心阀门：只有在初始加载完毕，且【不在扫描期间】，才允许落盘！
+    // 这样无论扫描期间 songs 数组如何疯狂膨胀，都不会触发哪怕 1 KB 的数据库写入。
+    if (isLibraryLoaded && !isScanning) {
+      saveLibraryToDB(songs).then(() => {
+        console.log(`[Aetheria DB] 曲库已安全持久化: ${songs.length} 首`);
+      });
+    }
+  }, [songs, isLibraryLoaded, isScanning]); // 💥 极其关键：将 isScanning 加入依赖数组
+
+  // 1. LIFO 手势栈拦截（防侧滑退出）
+  const closeSleepTimerModal = React.useCallback(() => setShowSleepTimerModal(false), []);
+  useEffect(() => {
+    const stack = (window as any).aetheriaBackStack;
+    if (stack && showSleepTimerModal) stack.push(closeSleepTimerModal);
+    return () => {
+      if (stack) (window as any).aetheriaBackStack = stack.filter((fn: any) => fn !== closeSleepTimerModal);
+    };
+  }, [showSleepTimerModal, closeSleepTimerModal]);
+
+  // 2. 💥 核心定时引擎 (依靠原生前台护盾，息屏绝不掉线！)
+  useEffect(() => {
+    if (!sleepTimerActive || !sleepTargetTime) return;
+
+    const interval = setInterval(() => {
+      const now = Date.now();
+      const remaining = Math.max(0, sleepTargetTime - now);
+      setSleepTimeRemaining(remaining);
+
+      // 时间到了！
+      if (remaining <= 0) {
+        if (sleepFinishTrack) {
+          // 如果用户要求播完这首歌，我们下达“死亡倒计时”指令
+          pendingSleepStopRef.current = true;
+          setSleepTimerActive(false); // 关闭定时器 UI
+        } else {
+          // 如果要求立刻停止，手起刀落！
+          audioEngine.pause();
+          setIsPlaying(false);
+          setSleepTimerActive(false);
+        }
+      }
+    }, 1000); // 1秒级精度
+
+    return () => clearInterval(interval);
+  }, [sleepTimerActive, sleepTargetTime, sleepFinishTrack]);
 
   useEffect(() => {
     localStorage.setItem('aetheria_playlists', JSON.stringify(playlists));
@@ -132,7 +252,7 @@ export default function App() {
     await scanDirectory(handle);
 
     setScanProgress({ current: 0, total: audioFiles.length });
-    const BATCH_SIZE = 10;
+    const BATCH_SIZE = 100;
 
     for (let i = 0; i < audioFiles.length; i++) {
       try {
@@ -300,6 +420,15 @@ export default function App() {
   };
 
   const handleNext = (isCrossfade = false) => {
+    // 💥 【睡眠定时器拦截】：如果收到了定时器的死亡指令，优雅落幕！
+    if (pendingSleepStopRef.current) {
+      audioEngine.pause();
+      setIsPlaying(false);
+      setProgress(0);
+      pendingSleepStopRef.current = false; // 重置指令
+      return; // 彻底阻断切歌逻辑！
+    }
+
     if (playQueue.length === 0) return;
 
     if (loopMode === 'one') {
@@ -572,6 +701,77 @@ export default function App() {
     };
   }, []);
 
+  // ==========================================
+  // 💥 操作系统级媒体控制 (Web Media Session API)
+  // ==========================================
+
+  // 1. 同步播放状态给操作系统 (让蓝牙耳机知道现在是播放还是暂停)
+  useEffect(() => {
+    if ('mediaSession' in navigator) {
+      navigator.mediaSession.playbackState = isPlaying ? 'playing' : 'paused';
+    }
+  }, [isPlaying]);
+
+  // 2. 同步歌曲元数据给锁屏界面和通知栏
+  useEffect(() => {
+    if ('mediaSession' in navigator && currentSong) {
+      navigator.mediaSession.metadata = new MediaMetadata({
+        title: currentSong.title,
+        artist: currentSong.artist,
+        album: currentSong.album || 'Unknown Album',
+        // 操作系统会自动抓取这张虚拟图片，铺满你的锁屏背景！
+        artwork: currentSong.coverUrl ? [
+          { src: currentSong.coverUrl, sizes: '512x512', type: 'image/jpeg' }
+        ] : []
+      });
+    }
+  }, [currentSong]);
+
+  // 3. 拦截操作系统的硬件按键与控制中心点击事件，反向控制 React 引擎
+  useEffect(() => {
+    if ('mediaSession' in navigator) {
+      navigator.mediaSession.setActionHandler('play', () => {
+        audioEngine.play();
+        setIsPlaying(true);
+      });
+
+      navigator.mediaSession.setActionHandler('pause', () => {
+        audioEngine.pause();
+        setIsPlaying(false);
+      });
+
+      navigator.mediaSession.setActionHandler('previoustrack', () => {
+        handlePrev();
+      });
+
+      navigator.mediaSession.setActionHandler('nexttrack', () => {
+        // 使用你原本就设计好的 Ref，确保拿到最新的上下文执行下一首
+        if (handleNextRef.current) {
+          handleNextRef.current();
+        }
+      });
+
+      // 可选：如果你希望在锁屏界面能拖动进度条，还可以加上 seekto 回调
+      navigator.mediaSession.setActionHandler('seekto', (details) => {
+        if (details.seekTime !== undefined) {
+          audioEngine.seek(details.seekTime);
+          setProgress(details.seekTime);
+        }
+      });
+    }
+  }, [playQueue, queueIndex, loopMode]); // 依赖项包含队列状态，保证切歌逻辑正确
+
+  // ==========================================
+  // 🛡️ 启动原生 Android 前台保活护盾
+  // ==========================================
+  useEffect(() => {
+    // 确保我们在 Android 壳环境中
+    if (window.AetheriaBridge && window.AetheriaBridge.setKeepAlive) {
+      // 当 isPlaying 变为 true 时启动护盾，false 时销毁护盾
+      window.AetheriaBridge.setKeepAlive(isPlaying);
+    }
+  }, [isPlaying]);
+
   const handleSeek = (e: React.ChangeEvent<HTMLInputElement>) => {
     const time = parseFloat(e.target.value);
     audioEngine.seek(time);
@@ -823,7 +1023,8 @@ export default function App() {
                   onClose={() => setCurrentView('library')}
                   songs={songs}
                   onClearLibrary={() => {
-                    setSongs([]);
+                    setSongs([]); // 这里设为空数组，上面的 useEffect 就会自动把空状态同步到数据库
+                    setPlaylists([]); // 清理歌单
                     setPlayQueue([]);
                     setCurrentSong(null);
                     setIsPlaying(false);
@@ -1151,6 +1352,19 @@ export default function App() {
             >
               <List className="w-3 h-3 md:w-4 md:h-4" />
             </button>
+            {/* 💥 睡眠定时器入口 */}
+            <button
+              onClick={() => setShowSleepTimerModal(true)}
+              className={cn("transition-colors cursor-pointer flex items-center gap-1", sleepTimerActive ? "text-[#ff4e00]" : "text-white/60 hover:text-white")}
+            >
+              <Moon className="w-3 h-3 md:w-4 md:h-4" />
+              {/* 如果正在倒计时，在按钮旁边显示极简剩余时间 */}
+              {sleepTimerActive && sleepTimeRemaining > 0 && (
+                <span className="text-[9px] font-mono tracking-tighter">
+                  {Math.ceil(sleepTimeRemaining / 60000)}m
+                </span>
+              )}
+            </button>
           </div>
 
           <div className="w-full flex items-center gap-2 md:gap-3 text-[10px] md:text-xs text-white/50 font-mono">
@@ -1396,6 +1610,130 @@ export default function App() {
           </div>
         </div>
       )}
+
+      {/* ==========================================
+          🌙 睡眠定时器控制面板 (增强版：支持自定义)
+      ========================================== */}
+      <AnimatePresence>
+        {showSleepTimerModal && (
+          <motion.div
+            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 flex items-end justify-center bg-black/60 backdrop-blur-sm md:items-center p-4"
+            onClick={() => setShowSleepTimerModal(false)}
+          >
+            <motion.div
+              initial={{ y: "100%" }} animate={{ y: 0 }} exit={{ y: "100%" }}
+              transition={{ type: "spring", damping: 25, stiffness: 200 }}
+              onClick={(e) => e.stopPropagation()}
+              className="w-full max-w-sm bg-[#1a1a1a]/95 backdrop-blur-xl border border-white/10 rounded-t-3xl md:rounded-3xl p-6 shadow-2xl pb-10 md:pb-6"
+            >
+              <div className="flex items-center justify-between mb-6">
+                <h3 className="text-xl font-bold flex items-center gap-2">
+                  <Moon className="w-5 h-5 text-[#ff4e00]" /> Sleep Timer
+                </h3>
+                <button onClick={() => setShowSleepTimerModal(false)} className="text-white/40 hover:text-white">
+                  <X className="w-6 h-6" />
+                </button>
+              </div>
+
+              {/* 当倒计时正在进行时，显示醒目的大字报倒计时 */}
+              {sleepTimerActive && (
+                <div className="flex flex-col items-center justify-center py-4 mb-4 bg-[#ff4e00]/10 rounded-2xl border border-[#ff4e00]/20">
+                  <span className="text-[#ff4e00] font-medium text-sm mb-1">Time Remaining</span>
+                  <span className="text-4xl font-mono font-bold text-white tracking-tighter">
+                    {Math.floor(sleepTimeRemaining / 60000).toString().padStart(2, '0')}:
+                    {Math.floor((sleepTimeRemaining % 60000) / 1000).toString().padStart(2, '0')}
+                  </span>
+                </div>
+              )}
+
+              {/* 预设时间选项 */}
+              <div className="grid grid-cols-4 gap-2 mb-3">
+                {[15, 30, 45, 60].map(mins => (
+                  <button
+                    key={mins}
+                    onClick={() => {
+                      setSleepTargetTime(Date.now() + mins * 60000);
+                      setSleepTimerActive(true);
+                      setCustomSleepTime(''); // 清空自定义输入框
+                    }}
+                    className={cn(
+                      "py-3 rounded-xl text-sm font-medium transition-all border",
+                      sleepTimerActive && Math.ceil(sleepTimeRemaining / 60000) === mins && !customSleepTime
+                        ? "bg-[#ff4e00]/20 text-[#ff4e00] border-[#ff4e00]/30"
+                        : "bg-white/5 text-white border-white/10 hover:bg-white/10"
+                    )}
+                  >
+                    {mins}m
+                  </button>
+                ))}
+              </div>
+
+              {/* 💥 自定义时间输入行 */}
+              <div className="flex items-center gap-2 mb-6">
+                <div className="relative flex-1">
+                  <input
+                    type="number"
+                    min="1"
+                    max="999"
+                    placeholder="Custom minutes..."
+                    value={customSleepTime}
+                    onChange={(e) => setCustomSleepTime(e.target.value)}
+                    className="w-full bg-white/5 border border-white/10 rounded-xl py-3 pl-4 pr-12 text-white placeholder:text-white/40 focus:outline-none focus:border-[#ff4e00]/50 focus:bg-white/10 transition-all text-sm"
+                  />
+                  <span className="absolute right-4 top-1/2 -translate-y-1/2 text-white/40 text-sm font-medium">min</span>
+                </div>
+                <button
+                  disabled={!customSleepTime || parseInt(customSleepTime) <= 0}
+                  onClick={() => {
+                    const mins = parseInt(customSleepTime);
+                    if (!isNaN(mins) && mins > 0) {
+                      setSleepTargetTime(Date.now() + mins * 60000);
+                      setSleepTimerActive(true);
+                    }
+                  }}
+                  className="bg-[#ff4e00] hover:bg-[#ff6a2b] disabled:opacity-50 disabled:hover:bg-[#ff4e00] text-white px-5 py-3 rounded-xl text-sm font-medium transition-all shadow-lg shadow-[#ff4e00]/20"
+                >
+                  Start
+                </button>
+              </div>
+
+              {/* “播完当前曲目再停止” 开关 */}
+              <div className="flex items-center justify-between p-4 glass-panel rounded-xl mb-6">
+                <div className="flex flex-col">
+                  <span className="text-sm font-medium text-white">Finish current track</span>
+                  <span className="text-[11px] text-white/50 mt-0.5">Wait for the song to end before stopping</span>
+                </div>
+                <label className="relative inline-flex items-center cursor-pointer shrink-0">
+                  <input
+                    type="checkbox"
+                    checked={sleepFinishTrack}
+                    onChange={(e) => setSleepFinishTrack(e.target.checked)}
+                    className="sr-only peer"
+                  />
+                  <div className="w-11 h-6 bg-white/20 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[#ff4e00]"></div>
+                </label>
+              </div>
+
+              {/* 取消定时器 */}
+              {sleepTimerActive && (
+                <button
+                  onClick={() => {
+                    setSleepTimerActive(false);
+                    setSleepTargetTime(null);
+                    setCustomSleepTime(''); // 清空自定义时间
+                    pendingSleepStopRef.current = false;
+                  }}
+                  className="w-full flex items-center justify-center gap-2 bg-red-500/10 hover:bg-red-500/20 text-red-400 transition-colors rounded-xl py-3 text-sm font-medium border border-red-500/20"
+                >
+                  <Timer className="w-4 h-4" /> Cancel Timer
+                </button>
+              )}
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
     </div>
   );
 }
