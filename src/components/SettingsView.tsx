@@ -45,13 +45,13 @@ export function SettingsView({ onClose, songs, onClearLibrary }: SettingsViewPro
               <FolderSearch className="w-5 h-5 text-[#ff4e00]" />
               Library
             </h2>
-            
+
             <div className="flex items-center justify-between">
               <div>
                 <h3 className="font-medium">Library Status</h3>
                 <p className="text-sm text-white/50">{songs.length} tracks in current session.</p>
               </div>
-              <button 
+              <button
                 onClick={onClearLibrary}
                 className="text-red-400 hover:text-red-300 text-sm font-medium transition-colors px-4 py-2 rounded-full border border-red-400/20 hover:bg-red-400/10"
               >
@@ -66,7 +66,7 @@ export function SettingsView({ onClose, songs, onClearLibrary }: SettingsViewPro
               <RefreshCw className="w-5 h-5 text-[#ff4e00]" />
               Playback Algorithms
             </h2>
-            
+
             <div className="space-y-6">
               <div className="flex items-center justify-between">
                 <div>
@@ -74,8 +74,8 @@ export function SettingsView({ onClose, songs, onClearLibrary }: SettingsViewPro
                   <p className="text-sm text-white/50">Seamlessly blend the end of one song into the beginning of the next.</p>
                 </div>
                 <label className="relative inline-flex items-center cursor-pointer">
-                  <input 
-                    type="checkbox" 
+                  <input
+                    type="checkbox"
                     className="sr-only peer"
                     checked={settings.crossfade}
                     onChange={(e) => updateSetting('crossfade', e.target.checked)}
@@ -90,10 +90,10 @@ export function SettingsView({ onClose, songs, onClearLibrary }: SettingsViewPro
                     <span className="text-white/70">Crossfade Duration</span>
                     <span className="text-[#ff4e00] font-mono">{settings.crossfadeDuration}s</span>
                   </div>
-                  <input 
-                    type="range" 
-                    min="1" 
-                    max="12" 
+                  <input
+                    type="range"
+                    min="1"
+                    max="12"
                     step="1"
                     value={settings.crossfadeDuration}
                     onChange={(e) => updateSetting('crossfadeDuration', parseInt(e.target.value))}
@@ -110,10 +110,10 @@ export function SettingsView({ onClose, songs, onClearLibrary }: SettingsViewPro
                   </div>
                   <span className="text-[#ff4e00] font-mono">{settings.playbackFadeDuration}s</span>
                 </div>
-                <input 
-                  type="range" 
-                  min="0" 
-                  max="3" 
+                <input
+                  type="range"
+                  min="0"
+                  max="3"
                   step="0.1"
                   value={settings.playbackFadeDuration}
                   onChange={(e) => updateSetting('playbackFadeDuration', parseFloat(e.target.value))}
@@ -127,8 +127,8 @@ export function SettingsView({ onClose, songs, onClearLibrary }: SettingsViewPro
                   <p className="text-sm text-white/50">Mix stereo channels into a single mono channel.</p>
                 </div>
                 <label className="relative inline-flex items-center cursor-pointer">
-                  <input 
-                    type="checkbox" 
+                  <input
+                    type="checkbox"
                     className="sr-only peer"
                     checked={settings.forceMono}
                     onChange={(e) => updateSetting('forceMono', e.target.checked)}
@@ -145,7 +145,7 @@ export function SettingsView({ onClose, songs, onClearLibrary }: SettingsViewPro
               <Sliders className="w-5 h-5 text-[#ff4e00]" />
               Equalizer (EQ)
             </h2>
-            
+
             <div className="grid grid-cols-3 gap-8">
               {[
                 { label: 'Low', value: settings.eq[0], index: 0 },
@@ -155,10 +155,10 @@ export function SettingsView({ onClose, songs, onClearLibrary }: SettingsViewPro
                 <div key={band.label} className="flex flex-col items-center gap-4">
                   <span className="text-sm font-medium text-white/70">{band.label}</span>
                   <div className="h-32 flex items-center justify-center">
-                    <input 
-                      type="range" 
-                      min="-12" 
-                      max="12" 
+                    <input
+                      type="range"
+                      min="-12"
+                      max="12"
                       step="0.1"
                       value={band.value}
                       onChange={(e) => updateEQ(band.index, parseFloat(e.target.value))}
@@ -172,7 +172,7 @@ export function SettingsView({ onClose, songs, onClearLibrary }: SettingsViewPro
               ))}
             </div>
             <div className="mt-6 flex justify-center">
-              <button 
+              <button
                 onClick={() => updateSetting('eq', [0, 0, 0])}
                 className="text-xs text-white/50 hover:text-white transition-colors px-3 py-1 rounded-full border border-white/10 hover:bg-white/5"
               >
@@ -187,7 +187,7 @@ export function SettingsView({ onClose, songs, onClearLibrary }: SettingsViewPro
               <Volume2 className="w-5 h-5 text-[#ff4e00]" />
               Volume & Dynamics
             </h2>
-            
+
             <div className="space-y-8">
               <div>
                 <div className="flex justify-between text-sm mb-2">
@@ -197,10 +197,10 @@ export function SettingsView({ onClose, songs, onClearLibrary }: SettingsViewPro
                   </div>
                   <span className="text-[#ff4e00] font-mono">{settings.gain > 0 ? '+' : ''}{settings.gain} dB</span>
                 </div>
-                <input 
-                  type="range" 
-                  min="-12" 
-                  max="12" 
+                <input
+                  type="range"
+                  min="-12"
+                  max="12"
                   step="1"
                   value={settings.gain}
                   onChange={(e) => updateSetting('gain', parseInt(e.target.value))}
@@ -216,10 +216,10 @@ export function SettingsView({ onClose, songs, onClearLibrary }: SettingsViewPro
                   </div>
                   <span className="text-[#ff4e00] font-mono">{settings.volumeLimit}%</span>
                 </div>
-                <input 
-                  type="range" 
-                  min="10" 
-                  max="100" 
+                <input
+                  type="range"
+                  min="10"
+                  max="100"
                   step="1"
                   value={settings.volumeLimit}
                   onChange={(e) => updateSetting('volumeLimit', parseInt(e.target.value))}
@@ -235,7 +235,7 @@ export function SettingsView({ onClose, songs, onClearLibrary }: SettingsViewPro
               <Ear className="w-5 h-5 text-[#ff4e00]" />
               Accessibility
             </h2>
-            
+
             <div>
               <div className="flex justify-between text-sm mb-2">
                 <div>
@@ -248,10 +248,10 @@ export function SettingsView({ onClose, songs, onClearLibrary }: SettingsViewPro
               </div>
               <div className="flex items-center gap-4">
                 <span className="text-xs font-medium text-white/50">L</span>
-                <input 
-                  type="range" 
-                  min="-1" 
-                  max="1" 
+                <input
+                  type="range"
+                  min="-1"
+                  max="1"
                   step="0.05"
                   value={settings.balance}
                   onChange={(e) => updateSetting('balance', parseFloat(e.target.value))}
@@ -269,9 +269,10 @@ export function SettingsView({ onClose, songs, onClearLibrary }: SettingsViewPro
               Audio Output Information
             </h2>
             <p className="text-sm text-white/70 leading-relaxed">
-              Aetheria uses the Web Audio API for high-fidelity audio processing. 
-              While the internal processing supports up to 32 channels (e.g., 5.1.2, 7.1.4 Dolby Atmos setups), 
-              the actual output channel count is determined by your browser and operating system's hardware configuration. 
+              Aetheria V2026.04.02.04
+              Aetheria uses the Web Audio API for high-fidelity audio processing.
+              While the internal processing supports up to 32 channels (e.g., 5.1.2, 7.1.4 Dolby Atmos setups),
+              the actual output channel count is determined by your browser and operating system's hardware configuration.
               Currently, the Web Audio API defaults to Stereo (2 channels) or 5.1 Surround depending on your system's default audio device.
             </p>
           </section>
