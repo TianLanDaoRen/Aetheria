@@ -191,7 +191,7 @@ export function PlaylistsView({
               )}
             </div>
             <div className="flex flex-wrap items-center justify-center md:justify-start gap-2 md:gap-4 text-white/60">
-              <span className="text-sm">{playlistSongs.length} songs</span>
+              <span className="text-sm">{playlistSongs.length} tracks</span>
 
               {!isAuto && selectedPlaylistSongs.size > 0 && (
                 <button
