@@ -269,8 +269,7 @@ export function SettingsView({ onClose, songs, onClearLibrary }: SettingsViewPro
               Audio Output Information
             </h2>
             <p className="text-sm text-white/70 leading-relaxed">
-              Aetheria V2026.04.02.04
-              Aetheria uses the Web Audio API for high-fidelity audio processing.
+              Aetheria V2026.04.02.04 uses the Web Audio API for high-fidelity audio processing.
               While the internal processing supports up to 32 channels (e.g., 5.1.2, 7.1.4 Dolby Atmos setups),
               the actual output channel count is determined by your browser and operating system's hardware configuration.
               Currently, the Web Audio API defaults to Stereo (2 channels) or 5.1 Surround depending on your system's default audio device.
